@@ -1,0 +1,5 @@
+title: DuckHunt Horizon Min Environment
+sdk: docker
+app_port: 7860
+tags:
+  - openenv

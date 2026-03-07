@@ -1,0 +1,20 @@
+Metadata-Version: 2.4
+Name: duckhunt-env
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: openenv-core>=0.2.1
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: pillow
+Requires-Dist: pydantic>=2
+Provides-Extra: server
+Requires-Dist: uvicorn[standard]; extra == "server"
+Requires-Dist: pillow; extra == "server"
+Requires-Dist: fastapi; extra == "server"
+Provides-Extra: client
+Requires-Dist: httpx; extra == "client"
+Provides-Extra: train
+Requires-Dist: trl>=0.12; extra == "train"
+Requires-Dist: wandb; extra == "train"
+Requires-Dist: torch; extra == "train"
+Requires-Dist: torchvision; extra == "train"
