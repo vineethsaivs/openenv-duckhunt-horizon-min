@@ -511,6 +511,10 @@ def train(args: argparse.Namespace):
             reward_weights=[1.0, 0.3],
         )
 
+        # --- Workaround: TRL/PEFT version mismatch ---
+        if not hasattr(model, 'warnings_issued'):
+            model.warnings_issued = {}
+
         # --- Trainer ---
         trainer = GRPOTrainer(
             model=model,
