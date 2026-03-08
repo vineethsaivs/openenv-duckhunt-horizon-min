@@ -1,3 +1,4 @@
+from __future__ import annotations
 """GRPO training script for Duck Hunt on H100.
 
 Uses Unsloth FastModel + TRL GRPOTrainer to train Qwen3.5-9B
@@ -12,8 +13,6 @@ Usage:
 
 # Unsloth must be imported before all other ML libraries
 import unsloth  # noqa: F401  — patches transformers/peft early
-
-from __future__ import annotations
 
 import argparse
 import json
