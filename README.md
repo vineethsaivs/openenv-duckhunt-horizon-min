@@ -252,8 +252,6 @@ This demonstrates that small language models can learn reactive, latency-aware r
 **OpenEnv Hackathon — San Francisco, March 2026**
 Built in one day with Claude Code + Northflank H100.
 
-Inspired by [horizon_min](https://github.com/dmayboroda/horizon_min) by [@dmayboroda](https://github.com/dmayboroda).
-
 ---
 
 ## License
