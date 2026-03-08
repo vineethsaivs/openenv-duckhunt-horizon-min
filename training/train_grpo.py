@@ -508,7 +508,6 @@ def train(args: argparse.Namespace):
             num_generations=4,
             max_completion_length=64,
             temperature=0.7,
-            stop_token_ids=[tokenizer.eos_token_id],
             # Logging & checkpointing
             logging_steps=1,
             save_steps=50,
