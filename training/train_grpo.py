@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--push-to-hub", action="store_true")
     p.add_argument("--hub-model-id", type=str, default=None)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--resume-from-checkpoint", type=str, default=None,
+                    help="Path to checkpoint dir to resume training from")
     return p.parse_args()
 
 
@@ -414,12 +416,11 @@ def load_model(args: argparse.Namespace):
     import unsloth  # noqa: F401
     from unsloth import FastModel
 
-    logger.info("Loading Qwen3-8B with bf16 via Unsloth FastModel ...")
+    logger.info("Loading Qwen3-8B with 4-bit quantization via Unsloth FastModel ...")
 
     model, tokenizer = FastModel.from_pretrained(
         "unsloth/Qwen3-8B",
-        load_in_4bit=False,
-        load_in_16bit=True,
+        load_in_4bit=True,
         fast_inference=False,
         use_gradient_checkpointing="unsloth",
     )
@@ -440,7 +441,7 @@ def load_model(args: argparse.Namespace):
     # Left-padding required for batched generation with decoder-only models
     tokenizer.padding_side = "left"
 
-    logger.info("Model loaded: Qwen3-8B, bf16 LoRA rank 16")
+    logger.info("Model loaded: Qwen3-8B, 4-bit QLoRA rank 16")
     return model, tokenizer
 
 
@@ -491,7 +492,7 @@ def train(args: argparse.Namespace):
                 config={
                     "model": "unsloth/Qwen3-8B",
                     "lora_rank": 16,
-                    "precision": "bf16",
+                    "precision": "4bit-qlora",
                     "max_steps": args.max_steps,
                     "num_samples": args.num_samples,
                 },
@@ -502,8 +503,8 @@ def train(args: argparse.Namespace):
         grpo_config = GRPOConfig(
             output_dir=output_dir,
             max_steps=args.max_steps,
-            per_device_train_batch_size=2,
-            gradient_accumulation_steps=4,
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=8,
             learning_rate=5e-6,
             warmup_steps=25,
             weight_decay=0.01,
@@ -518,8 +519,8 @@ def train(args: argparse.Namespace):
             num_iterations=1,
             # Logging & checkpointing
             logging_steps=1,
-            save_steps=50,
-            save_total_limit=3,
+            save_steps=25,
+            save_total_limit=5,
             report_to=report_to,
             # Reward weights: [accuracy, format]
             reward_weights=[1.0, 0.3],
@@ -539,7 +540,7 @@ def train(args: argparse.Namespace):
         )
 
         logger.info("Starting GRPO training for %d steps ...", args.max_steps)
-        trainer.train()
+        trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
         # --- Save final ---
         final_dir = Path(output_dir) / "final"
