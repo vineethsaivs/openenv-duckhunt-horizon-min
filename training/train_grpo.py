@@ -1,18 +1,21 @@
 from __future__ import annotations
 """GRPO training script for Duck Hunt on H100.
 
-Uses Unsloth FastModel + TRL GRPOTrainer to train Qwen3.5-9B
-via text-only game state descriptions and Group Relative Policy Optimization.
+Uses Unsloth FastModel for efficient model loading + vanilla TRL GRPOTrainer
+to train Qwen3-8B via text-only game state descriptions and GRPO.
 
 Usage:
     python training/train_grpo.py \
         --max-steps 500 \
         --output-dir outputs/duckhunt_grpo \
-        --push-to-hub --hub-model-id user/duckhunt-qwen3.5-grpo
+        --push-to-hub --hub-model-id user/duckhunt-qwen3-grpo
 """
 
-# Unsloth must be imported before all other ML libraries
-import unsloth  # noqa: F401  — patches transformers/peft early
+# IMPORTANT: Import GRPOTrainer BEFORE unsloth to get the vanilla TRL version.
+# Unsloth replaces trl.GRPOTrainer with a compiled version that has a bug in
+# masked_batch_mean (tensor size mismatch with variable-length completions).
+# By importing first, our reference points to the original unpatched class.
+from trl import GRPOConfig, GRPOTrainer
 
 import argparse
 import json
@@ -39,7 +42,7 @@ logger = logging.getLogger("train_grpo")
 #  1. CLI
 # ===================================================================
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Duck Hunt GRPO Training (Qwen3.5-9B)")
+    p = argparse.ArgumentParser(description="Duck Hunt GRPO Training (Qwen3-8B)")
     p.add_argument("--env-url", type=str, default=None,
                     help="OpenEnv server URL (if None, starts server locally)")
     p.add_argument("--max-steps", type=int, default=500)
@@ -69,7 +72,6 @@ def start_server(port: int = 7860) -> subprocess.Popen:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    # Wait for server to be ready
     import httpx
     for _attempt in range(30):
         try:
@@ -183,7 +185,6 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
         ducks_flying = game.ducks_remaining
         description_parts = [f"Game state: {ducks_flying} ducks flying."]
 
-        # Describe nearest/visible ducks
         if match:
             for label, duck_d in [("Duck A", duck_a_data), ("Duck B", duck_b_data)]:
                 if duck_d.get("state") == "flying":
@@ -403,10 +404,14 @@ def _make_format_reward():
 
 
 # ===================================================================
-#  6. Model loading (Unsloth FastModel — Qwen3.5-9B)
+#  6. Model loading (Unsloth FastModel — Qwen3-8B)
 # ===================================================================
 def load_model(args: argparse.Namespace):
     """Load Qwen3-8B with bf16 LoRA via Unsloth FastModel."""
+    # Import unsloth HERE (not at top level) so it patches transformers/peft
+    # for efficient model loading, but does NOT replace our already-imported
+    # vanilla TRL GRPOTrainer with the buggy compiled version.
+    import unsloth  # noqa: F401
     from unsloth import FastModel
 
     logger.info("Loading Qwen3-8B with bf16 via Unsloth FastModel ...")
@@ -432,7 +437,7 @@ def load_model(args: argparse.Namespace):
         use_dora=False,
     )
 
-    # Left-padding is required for batched generation with decoder-only models
+    # Left-padding required for batched generation with decoder-only models
     tokenizer.padding_side = "left"
 
     logger.info("Model loaded: Qwen3-8B, bf16 LoRA rank 16")
@@ -444,8 +449,6 @@ def load_model(args: argparse.Namespace):
 # ===================================================================
 def train(args: argparse.Namespace):
     """Main training entry point."""
-    from trl import GRPOConfig, GRPOTrainer
-
     import shutil, pathlib
     cache = pathlib.Path("unsloth_compiled_cache")
     if cache.exists():
@@ -502,7 +505,7 @@ def train(args: argparse.Namespace):
             per_device_train_batch_size=2,
             gradient_accumulation_steps=4,
             learning_rate=5e-6,
-            warmup_ratio=0.05,
+            warmup_steps=25,
             weight_decay=0.01,
             lr_scheduler_type="cosine",
             max_grad_norm=1.0,
@@ -526,7 +529,7 @@ def train(args: argparse.Namespace):
         if not hasattr(model, 'warnings_issued'):
             model.warnings_issued = {}
 
-        # --- Trainer ---
+        # --- Trainer (vanilla TRL — NOT Unsloth's compiled version) ---
         trainer = GRPOTrainer(
             model=model,
             args=grpo_config,
@@ -579,7 +582,7 @@ tags:
 
 # {repo_id.split('/')[-1]}
 
-LoRA adapter for [Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3-8B),
+LoRA adapter for [Qwen3-8B](https://huggingface.co/unsloth/Qwen3-8B),
 fine-tuned with GRPO to play Duck Hunt.
 
 ## Training
