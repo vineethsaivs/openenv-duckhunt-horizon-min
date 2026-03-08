@@ -60,9 +60,9 @@ TOOLS = [SHOOT_TOOL]
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a Duck Hunt AI. Shoot flying ducks by calling the shoot tool.
 
-You see {num_frames} frames. Latency: {processing_latency_frames} frames.
+You see {num_frames} frames. You are NOT told the current network delay. It changes unpredictably. Use your recent shot results to infer if delay is high (you're missing) or low (you're hitting). Adjust horizon accordingly — increase if missing, decrease if hitting.
+Your aim may also have random drift that changes over time. Adjust based on where your shots actually land relative to where you aimed.
 Coordinates: x (0=left, 1=right), y (0=top, 1=bottom).
-Predict where the duck will be after latency + horizon frames.
 
 IMPORTANT: Respond ONLY with shoot(x=<float>, y=<float>, horizon=<int>). No explanation."""
 
@@ -70,10 +70,8 @@ IMPORTANT: Respond ONLY with shoot(x=<float>, y=<float>, horizon=<int>). No expl
 def format_system_prompt(
     *,
     num_frames: int = 4,
-    processing_latency_frames: int = 6,
 ) -> str:
     """Return the system prompt with placeholders filled in."""
     return SYSTEM_PROMPT_TEMPLATE.format(
         num_frames=num_frames,
-        processing_latency_frames=processing_latency_frames,
     )

@@ -146,13 +146,27 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
     game.reset(seed=seed)
 
     latency_ms = random.choice(LATENCY_OPTIONS_MS)
+    latency_ms += int(random.gauss(0, 50))
+    latency_ms = max(50, min(800, latency_ms))
     latency_frames = int(latency_ms / 1000 * FPS)
+    recent_results: list[dict] = []
+    step_since_shift = 0
+    steps_until_latency_shift = random.randint(5, 15)
+    aim_noise_std = random.uniform(0.0, 0.08)
+    steps_until_noise_shift = random.randint(8, 22)
 
     for i in range(num_samples):
         if game.is_over():
             game.reset()
             latency_ms = random.choice(LATENCY_OPTIONS_MS)
+            latency_ms += int(random.gauss(0, 50))
+            latency_ms = max(50, min(800, latency_ms))
             latency_frames = int(latency_ms / 1000 * FPS)
+            recent_results = []
+            step_since_shift = 0
+            steps_until_latency_shift = random.randint(5, 15)
+            aim_noise_std = random.uniform(0.0, 0.08)
+            steps_until_noise_shift = random.randint(8, 22)
 
         # Ensure ducks are flying
         for _ in range(50):
@@ -162,7 +176,14 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
             if game.is_over():
                 game.reset()
                 latency_ms = random.choice(LATENCY_OPTIONS_MS)
+                latency_ms += int(random.gauss(0, 50))
+                latency_ms = max(50, min(800, latency_ms))
                 latency_frames = int(latency_ms / 1000 * FPS)
+                recent_results = []
+                step_since_shift = 0
+                steps_until_latency_shift = random.randint(5, 15)
+                aim_noise_std = random.uniform(0.0, 0.08)
+                steps_until_noise_shift = random.randint(8, 22)
 
         # Advance observation frames (no rendering needed for text-only)
         game.advance_frame(FRAMES_PER_OBSERVATION)
@@ -196,7 +217,16 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
                         f"moving {direction}."
                     )
 
-        description_parts.append(f"Processing latency: {latency_ms}ms.")
+        if recent_results:
+            shot_descs = []
+            for r in recent_results:
+                if r["result"] in ("hit", "double_kill"):
+                    shot_descs.append(r["result"])
+                else:
+                    shot_descs.append(f"{r['result']} (distance {r['distance']})")
+            description_parts.append("Recent shots: " + ", ".join(shot_descs) + ".")
+        else:
+            description_parts.append("No previous shots yet.")
         description_parts.append(f"Bullets remaining: {game.bullets_remaining}.")
         description_parts.append(f"Round: {game.round_number}. Score: {game.score}.")
 
@@ -210,11 +240,31 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
             "snapshot": snapshot,
         })
 
-        # Random action to advance the game
+        # Random action to advance the game (with aim noise)
         x = random.random()
         y = random.random()
+        noisy_x = max(0.0, min(1.0, x + random.gauss(0, aim_noise_std)))
+        noisy_y = max(0.0, min(1.0, y + random.gauss(0, aim_noise_std)))
         horizon = random.randint(0, 15)
-        game.shoot(x, y, advance_frames=latency_frames + horizon)
+        shot_result, _base_reward, shot_distance = game.shoot(
+            noisy_x, noisy_y, advance_frames=latency_frames + horizon,
+        )
+        recent_results.append({"result": shot_result, "distance": round(shot_distance, 2)})
+        recent_results = recent_results[-5:]
+
+        step_since_shift += 1
+        if step_since_shift >= steps_until_latency_shift:
+            latency_ms = random.choice(LATENCY_OPTIONS_MS)
+            latency_ms += int(random.gauss(0, 50))
+            latency_ms = max(50, min(800, latency_ms))
+            latency_frames = int(latency_ms / 1000 * FPS)
+            step_since_shift = 0
+            steps_until_latency_shift = random.randint(5, 15)
+
+        steps_until_noise_shift -= 1
+        if steps_until_noise_shift <= 0:
+            aim_noise_std = random.uniform(0.0, 0.08)
+            steps_until_noise_shift = random.randint(8, 22)
 
         if (i + 1) % 50 == 0:
             logger.info("Collected %d / %d snapshots", i + 1, num_samples)
@@ -244,10 +294,7 @@ def build_dataset(samples: list[dict], tokenizer) -> Dataset:
         if latency_frames == 0:
             latency_frames = int(latency_ms / 1000 * 30)
 
-        system_text = format_system_prompt(
-            num_frames=0,
-            processing_latency_frames=latency_frames,
-        )
+        system_text = format_system_prompt(num_frames=0)
 
         messages = [
             {"role": "system", "content": system_text},

@@ -36,7 +36,8 @@ class DuckHuntObservation(Observation):
     total_misses: int = Field(default=0, description="Cumulative misses towards game over")
 
     # Hardware simulation
-    processing_latency_ms: int = Field(default=0, description="Simulated VLM processing latency (ms)")
+    processing_latency_ms: int = Field(default=0, description="Hidden from model — always 0")
+    recent_results: list[dict] = Field(default_factory=list, description="Last N shot outcomes with result and distance for latency inference")
 
     # Feedback from last action
     last_action_result: Literal["hit", "miss", "double_kill", "no_target"] | None = Field(
