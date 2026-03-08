@@ -225,11 +225,11 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
 # ===================================================================
 #  4. Build HuggingFace dataset (text-only)
 # ===================================================================
-def build_dataset(samples: list[dict]) -> Dataset:
-    """Build dataset with text-only chat format for Qwen3.5-9B.
+def build_dataset(samples: list[dict], tokenizer) -> Dataset:
+    """Build dataset with Qwen3 chat template applied (thinking disabled).
 
-    Each row stores a JSON-serialised list of chat messages.
-    The set_transform deserialises at access time.
+    Each prompt is already formatted via tokenizer.apply_chat_template
+    with enable_thinking=False so the model generates shoot() directly.
     """
     from training.prompts import format_system_prompt
 
@@ -253,7 +253,15 @@ def build_dataset(samples: list[dict]) -> Dataset:
             {"role": "user", "content": sample["game_description"]},
         ]
 
-        prompts.append(json.dumps(messages))
+        # Apply Qwen3 chat template with thinking disabled
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+
+        prompts.append(text)
         snapshots.append(json.dumps(sample.get("snapshot") or {}))
         latencies.append(latency_ms)
 
@@ -270,24 +278,8 @@ def build_dataset(samples: list[dict]) -> Dataset:
         }),
     )
 
-    # Transform: deserialise JSON prompts to message lists at access time
-    ds.set_transform(_prompt_transform)
-
     logger.info("Dataset built: %d rows", len(ds))
     return ds
-
-
-def _prompt_transform(batch: dict) -> dict:
-    """Deserialise JSON prompts to message lists."""
-    new_prompts = []
-    for prompt_json in batch["prompt"]:
-        messages = json.loads(prompt_json)
-        new_prompts.append(messages)
-    return {
-        "prompt": new_prompts,
-        "snapshot": batch["snapshot"],
-        "latency_ms": batch["latency_ms"],
-    }
 
 
 # ===================================================================
@@ -467,13 +459,13 @@ def train(args: argparse.Namespace):
         args.env_url = "http://localhost:7860"
 
     try:
+        # --- Load model first (need tokenizer for dataset) ---
+        model, tokenizer = load_model(args)
+
         # --- Collect data ---
         logger.info("Collecting %d game-state snapshots ...", args.num_samples)
         samples = collect_snapshots(args.num_samples, seed=args.seed)
-        dataset = build_dataset(samples)
-
-        # --- Load model ---
-        model, tokenizer = load_model(args)
+        dataset = build_dataset(samples, tokenizer)
 
         # --- Reward functions ---
         accuracy_fn = _make_accuracy_reward()
@@ -514,8 +506,9 @@ def train(args: argparse.Namespace):
             bf16=True,
             # GRPO specifics
             num_generations=4,
-            max_completion_length=256,
+            max_completion_length=64,
             temperature=0.7,
+            stop_token_ids=[tokenizer.eos_token_id],
             # Logging & checkpointing
             logging_steps=1,
             save_steps=50,
