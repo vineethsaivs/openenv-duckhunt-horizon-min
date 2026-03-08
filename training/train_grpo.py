@@ -459,11 +459,8 @@ def train(args: argparse.Namespace):
     torch.manual_seed(args.seed)
     random.seed(args.seed)
 
-    # --- Auto-start server if no --env-url ---
+    # --- Server is not needed; data collection uses local game engine ---
     server_proc = None
-    if args.env_url is None:
-        server_proc = start_server(port=7860)
-        args.env_url = "http://localhost:7860"
 
     try:
         # --- Load model first (need tokenizer for dataset) ---
