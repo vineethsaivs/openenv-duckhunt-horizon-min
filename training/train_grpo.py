@@ -414,13 +414,13 @@ def _make_format_reward():
 #  6. Model loading (Unsloth FastModel — Qwen3.5-9B)
 # ===================================================================
 def load_model(args: argparse.Namespace):
-    """Load Qwen3.5-9B with bf16 LoRA via Unsloth FastModel."""
+    """Load Qwen3-8B-Instruct with bf16 LoRA via Unsloth FastModel."""
     from unsloth import FastModel
 
-    logger.info("Loading Qwen3.5-9B with bf16 via Unsloth FastModel ...")
+    logger.info("Loading Qwen3-8B-Instruct with bf16 via Unsloth FastModel ...")
 
     model, tokenizer = FastModel.from_pretrained(
-        "unsloth/Qwen3.5-9B",
+        "unsloth/Qwen3-8B-Instruct",
         load_in_4bit=False,
         load_in_16bit=True,
         fast_inference=False,
@@ -440,7 +440,7 @@ def load_model(args: argparse.Namespace):
         use_dora=False,
     )
 
-    logger.info("Model loaded: Qwen3.5-9B, bf16 LoRA rank 16")
+    logger.info("Model loaded: Qwen3-8B-Instruct, bf16 LoRA rank 16")
     return model, tokenizer
 
 
@@ -450,6 +450,12 @@ def load_model(args: argparse.Namespace):
 def train(args: argparse.Namespace):
     """Main training entry point."""
     from trl import GRPOConfig, GRPOTrainer
+
+    import shutil, pathlib
+    cache = pathlib.Path("unsloth_compiled_cache")
+    if cache.exists():
+        shutil.rmtree(cache)
+        print("Cleared unsloth compiled cache")
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -483,9 +489,9 @@ def train(args: argparse.Namespace):
             report_to = "wandb"
             wandb.init(
                 project="duckhunt-grpo",
-                name=f"qwen3.5-9b-grpo-{args.max_steps}steps",
+                name=f"qwen3-8b-grpo-{args.max_steps}steps",
                 config={
-                    "model": "unsloth/Qwen3.5-9B",
+                    "model": "unsloth/Qwen3-8B-Instruct",
                     "lora_rank": 16,
                     "precision": "bf16",
                     "max_steps": args.max_steps,
@@ -567,7 +573,7 @@ def _push_to_hub(repo_id: str, checkpoint_dir: str):
     card_content = f"""\
 ---
 library_name: peft
-base_model: unsloth/Qwen3.5-9B
+base_model: unsloth/Qwen3-8B-Instruct
 tags:
   - grpo
   - reinforcement-learning
@@ -576,7 +582,7 @@ tags:
 
 # {repo_id.split('/')[-1]}
 
-LoRA adapter for [Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B),
+LoRA adapter for [Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3-8B-Instruct),
 fine-tuned with GRPO to play Duck Hunt.
 
 ## Training
