@@ -414,13 +414,13 @@ def _make_format_reward():
 #  6. Model loading (Unsloth FastModel — Qwen3.5-9B)
 # ===================================================================
 def load_model(args: argparse.Namespace):
-    """Load Qwen3-8B-Instruct with bf16 LoRA via Unsloth FastModel."""
+    """Load Qwen3-8B with bf16 LoRA via Unsloth FastModel."""
     from unsloth import FastModel
 
-    logger.info("Loading Qwen3-8B-Instruct with bf16 via Unsloth FastModel ...")
+    logger.info("Loading Qwen3-8B with bf16 via Unsloth FastModel ...")
 
     model, tokenizer = FastModel.from_pretrained(
-        "unsloth/Qwen3-8B-Instruct",
+        "unsloth/Qwen3-8B",
         load_in_4bit=False,
         load_in_16bit=True,
         fast_inference=False,
@@ -440,7 +440,7 @@ def load_model(args: argparse.Namespace):
         use_dora=False,
     )
 
-    logger.info("Model loaded: Qwen3-8B-Instruct, bf16 LoRA rank 16")
+    logger.info("Model loaded: Qwen3-8B, bf16 LoRA rank 16")
     return model, tokenizer
 
 
@@ -491,7 +491,7 @@ def train(args: argparse.Namespace):
                 project="duckhunt-grpo",
                 name=f"qwen3-8b-grpo-{args.max_steps}steps",
                 config={
-                    "model": "unsloth/Qwen3-8B-Instruct",
+                    "model": "unsloth/Qwen3-8B",
                     "lora_rank": 16,
                     "precision": "bf16",
                     "max_steps": args.max_steps,
@@ -573,7 +573,7 @@ def _push_to_hub(repo_id: str, checkpoint_dir: str):
     card_content = f"""\
 ---
 library_name: peft
-base_model: unsloth/Qwen3-8B-Instruct
+base_model: unsloth/Qwen3-8B
 tags:
   - grpo
   - reinforcement-learning
@@ -582,7 +582,7 @@ tags:
 
 # {repo_id.split('/')[-1]}
 
-LoRA adapter for [Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3-8B-Instruct),
+LoRA adapter for [Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3-8B),
 fine-tuned with GRPO to play Duck Hunt.
 
 ## Training
