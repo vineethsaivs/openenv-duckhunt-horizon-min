@@ -1,0 +1,11 @@
+unsloth[cu128-torch280] @ git+https://github.com/unslothai/unsloth.git
+transformers>=5.0
+trl>=0.12
+wandb
+pillow
+openenv-core>=0.2.1
+fastapi
+uvicorn
+pydantic
+httpx
+accelerate
