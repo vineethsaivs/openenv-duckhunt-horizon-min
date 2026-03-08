@@ -1,7 +1,7 @@
 """GRPO training script for Duck Hunt on H100.
 
 Uses Unsloth FastModel + TRL GRPOTrainer to train Qwen3.5-9B
-from game screenshots via Group Relative Policy Optimization.
+via text-only game state descriptions and Group Relative Policy Optimization.
 
 Usage:
     python training/train_grpo.py \
@@ -10,11 +10,12 @@ Usage:
         --push-to-hub --hub-model-id user/duckhunt-qwen3.5-grpo
 """
 
+# Unsloth must be imported before all other ML libraries
+import unsloth  # noqa: F401  — patches transformers/peft early
+
 from __future__ import annotations
 
 import argparse
-import base64
-import io
 import json
 import logging
 import math
@@ -26,7 +27,6 @@ from pathlib import Path
 
 import torch
 from datasets import Dataset, Features, Value
-from PIL import Image
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,14 +97,8 @@ def stop_server(proc: subprocess.Popen):
 
 
 # ===================================================================
-#  3. Data collection — local game engine
+#  3. Data collection — local game engine (text-only)
 # ===================================================================
-def _pil_to_b64(img: Image.Image) -> str:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-
 def _snapshot_duck(duck) -> dict:
     return {
         "x": duck.x, "y": duck.y,
@@ -112,6 +106,22 @@ def _snapshot_duck(duck) -> dict:
         "state": duck.state.value,
         "sprite_dir": duck.sprite_dir,
     }
+
+
+def _duck_direction(dx: float, dy: float) -> str:
+    """Human-readable direction from velocity components."""
+    if abs(dx) < 1 and abs(dy) < 1:
+        return "stationary"
+    parts = []
+    if dy < -1:
+        parts.append("up")
+    elif dy > 1:
+        parts.append("down")
+    if dx > 1:
+        parts.append("right")
+    elif dx < -1:
+        parts.append("left")
+    return "-".join(parts) if parts else "stationary"
 
 
 def _rng_serial(obj):
@@ -122,15 +132,13 @@ def _rng_serial(obj):
 
 def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
     """Collect game-state snapshots using the local engine."""
-    from duckhunt_env.server.game_engine import DuckHuntGame
-    from duckhunt_env.server.renderer import Renderer
+    from duckhunt_env.server.game_engine import DuckHuntGame, DuckState
     from duckhunt_env.server.config import (
-        FRAME_OUTPUT_SIZE, FRAMES_PER_OBSERVATION,
+        SCREEN_WIDTH, SCREEN_HEIGHT, FRAMES_PER_OBSERVATION,
         LATENCY_OPTIONS_MS, FPS,
     )
 
     game = DuckHuntGame()
-    renderer = Renderer(output_size=FRAME_OUTPUT_SIZE)
     samples = []
 
     random.seed(seed)
@@ -155,30 +163,50 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
                 latency_ms = random.choice(LATENCY_OPTIONS_MS)
                 latency_frames = int(latency_ms / 1000 * FPS)
 
-        # Render frames
-        frames_b64 = []
-        for _ in range(FRAMES_PER_OBSERVATION):
-            state = game.get_state()
-            img = renderer.render_and_resize(state, game.frame_counter)
-            frames_b64.append(_pil_to_b64(img.convert("RGB")))
-            game.advance_frame(1)
+        # Advance observation frames (no rendering needed for text-only)
+        game.advance_frame(FRAMES_PER_OBSERVATION)
 
         # Capture snapshot for deterministic replay
         match = game._round.current_match if game._round else None
+        duck_a_data = _snapshot_duck(match.duck_a) if match else {}
+        duck_b_data = _snapshot_duck(match.duck_b) if match else {}
+
         snapshot = {
-            "duck_a": _snapshot_duck(match.duck_a) if match else {},
-            "duck_b": _snapshot_duck(match.duck_b) if match else {},
+            "duck_a": duck_a_data,
+            "duck_b": duck_b_data,
             "round_number": game.round_number,
             "bullets_remaining": game.bullets_remaining,
             "latency_frames": latency_frames,
             "rng_state": json.dumps(random.getstate(), default=_rng_serial),
         }
 
+        # Build text description from game state
+        ducks_flying = game.ducks_remaining
+        description_parts = [f"Game state: {ducks_flying} ducks flying."]
+
+        # Describe nearest/visible ducks
+        if match:
+            for label, duck_d in [("Duck A", duck_a_data), ("Duck B", duck_b_data)]:
+                if duck_d.get("state") == "flying":
+                    nx = duck_d["x"] / SCREEN_WIDTH
+                    ny = duck_d["y"] / SCREEN_HEIGHT
+                    direction = _duck_direction(duck_d["dx"], duck_d["dy"])
+                    description_parts.append(
+                        f"{label} at approximately ({nx:.2f}, {ny:.2f}), "
+                        f"moving {direction}."
+                    )
+
+        description_parts.append(f"Processing latency: {latency_ms}ms.")
+        description_parts.append(f"Bullets remaining: {game.bullets_remaining}.")
+        description_parts.append(f"Round: {game.round_number}. Score: {game.score}.")
+
+        game_description = " ".join(description_parts)
+
         samples.append({
-            "frames_b64": frames_b64,
+            "game_description": game_description,
             "latency_ms": latency_ms,
             "latency_frames": latency_frames,
-            "ducks_flying": game.ducks_remaining,
+            "ducks_flying": ducks_flying,
             "snapshot": snapshot,
         })
 
@@ -196,14 +224,13 @@ def collect_snapshots(num_samples: int, seed: int = 42) -> list[dict]:
 
 
 # ===================================================================
-#  4. Build HuggingFace dataset
+#  4. Build HuggingFace dataset (text-only)
 # ===================================================================
 def build_dataset(samples: list[dict]) -> Dataset:
-    """Build dataset with Qwen3.5 multimodal chat format.
+    """Build dataset with text-only chat format for Qwen3.5-9B.
 
-    Each row stores a JSON-serialised list of chat messages with
-    base64 image data URIs inline.  The set_transform deserialises
-    at access time so the trainer sees native message lists.
+    Each row stores a JSON-serialised list of chat messages.
+    The set_transform deserialises at access time.
     """
     from training.prompts import format_system_prompt
 
@@ -212,37 +239,19 @@ def build_dataset(samples: list[dict]) -> Dataset:
     latencies = []
 
     for sample in samples:
-        frames_b64 = sample["frames_b64"]
         latency_ms = sample["latency_ms"]
-        num_frames = len(frames_b64)
         latency_frames = sample.get("latency_frames", 0)
         if latency_frames == 0:
             latency_frames = int(latency_ms / 1000 * 30)
 
         system_text = format_system_prompt(
-            num_frames=num_frames,
+            num_frames=0,
             processing_latency_frames=latency_frames,
         )
 
-        # Qwen3.5 multimodal format: images as data URIs in content list
-        user_content = []
-        for b64 in frames_b64:
-            user_content.append({
-                "type": "image",
-                "image": f"data:image/png;base64,{b64}",
-            })
-        user_content.append({
-            "type": "text",
-            "text": (
-                f"{num_frames} frames, "
-                f"{sample.get('ducks_flying', '?')} ducks flying, "
-                f"latency {latency_frames} frames. Shoot now."
-            ),
-        })
-
         messages = [
             {"role": "system", "content": system_text},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": sample["game_description"]},
         ]
 
         prompts.append(json.dumps(messages))
