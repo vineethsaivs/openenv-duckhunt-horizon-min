@@ -432,6 +432,9 @@ def load_model(args: argparse.Namespace):
         use_dora=False,
     )
 
+    # Left-padding is required for batched generation with decoder-only models
+    tokenizer.padding_side = "left"
+
     logger.info("Model loaded: Qwen3-8B, bf16 LoRA rank 16")
     return model, tokenizer
 
@@ -506,8 +509,10 @@ def train(args: argparse.Namespace):
             bf16=True,
             # GRPO specifics
             num_generations=4,
+            max_prompt_length=512,
             max_completion_length=64,
             temperature=0.7,
+            num_iterations=1,
             # Logging & checkpointing
             logging_steps=1,
             save_steps=50,
